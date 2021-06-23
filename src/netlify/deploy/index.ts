@@ -8,8 +8,8 @@
 import commander, { Command } from 'commander';
 import { siteId as getSiteId, token as getToken } from '..';
 import { handleErrorMessage, handleSuccessMessage } from '../../utils';
-import NetlifyAPI from 'netlify';
 import { Ora } from 'ora';
+import { exec } from 'child_process';
 
 interface INetlifyDeployArgs {
   dir: string;
@@ -19,11 +19,6 @@ interface INetlifyDeployArgs {
   message?: string;
   spinner?: Ora;
 }
-
-type RETVAL = {
-  url: string;
-  logUrl: string;
-};
 
 /**
  * Execute the `netlify-deploy` command.
@@ -37,31 +32,25 @@ type RETVAL = {
  *
  * @returns {object} The Netlify deployment and log URLs.
  */
-export const execute = async (args: INetlifyDeployArgs): Promise<RETVAL | undefined> => {
-  let retVal: RETVAL | undefined;
+export const execute = async (args: INetlifyDeployArgs): Promise<string> => {
+  const token = args.token || (await getToken(args.spinner));
+  const siteId = args.siteId || (await getSiteId(args.spinner));
+  const production = args.production ? '--prod' : '';
 
-  try {
-    const token = args.token || (await getToken(args.spinner));
-    const client = new NetlifyAPI(token);
-    const siteId = args.siteId || (await getSiteId(args.spinner));
-
-    /* https://open-api.netlify.com/#operation/createSiteDeploy */
-    const response = await client.deploy(siteId, args.dir, {
-      draft: !args.production,
-      message: args.message
-    });
-
-    const url = args.production ? response.deploy.ssl_url : response.deploy.deploy_ssl_url;
-    const logUrl = `${response.deploy.admin_url}/deploys/${response.deploy.id}`;
-
-    retVal = { url, logUrl };
-  } catch (error: unknown) {
-    handleErrorMessage(error, 'netlify-deploy', args.spinner);
-
-    throw error;
-  }
-
-  return retVal;
+  return new Promise((resolve, reject) => {
+    exec(
+      `netlify deploy ${production} --dir=${args.dir} --site=${siteId} --auth=${token} --message=${args.message}`,
+      (err, stdout, stderr) => {
+        if (err) {
+          process.exitCode = 1;
+          handleErrorMessage(err, 'netlify-deploy', args.spinner);
+          reject(stderr);
+        } else {
+          resolve(stdout);
+        }
+      }
+    );
+  });
 };
 
 export default (spinner: Ora): commander.Command => {
@@ -89,7 +78,7 @@ export default (spinner: Ora): commander.Command => {
         });
 
         if (result) {
-          handleSuccessMessage(result.url, spinner);
+          handleSuccessMessage(result, spinner);
         } else {
           throw new Error();
         }
